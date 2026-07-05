@@ -30,12 +30,6 @@
 (define *sidekick-cmd* "claude")
 (define *sidekick-backend* 'auto) ; 'auto | 'tmux | 'pty
 
-(define (set-sidekick-cmd! cmd)
-  (set! *sidekick-cmd* cmd))
-
-(define (set-sidekick-backend! backend)
-  (set! *sidekick-backend* backend))
-
 ;;;; Backend selection
 
 (define (sidekick-in-tmux?)
