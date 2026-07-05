@@ -1,4 +1,4 @@
-(define package-name 'helix-sidekick)
+(define package-name 'sidekick.hx)
 (define version "0.1.0")
 
 ;; steel-pty must export: make-terminal-renderer, make-terminal-with-renderer,
