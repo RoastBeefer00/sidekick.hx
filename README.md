@@ -14,13 +14,13 @@ Defaults to `claude` (Claude Code CLI) but works with any interactive CLI tool.
 ## Installation
 
 ```sh
-forge pkg install --git https://github.com/RoastBeefer00/helix-sidekick.git
+forge pkg install --git https://github.com/RoastBeefer00/sidekick.hx.git
 ```
 
 Or add to your `cog.scm` dependencies:
 
 ```scheme
-(#:name helix-sidekick #:git-url "https://github.com/RoastBeefer00/helix-sidekick.git")
+(#:name sidekick.hx #:git-url "https://github.com/RoastBeefer00/sidekick.hx.git")
 ```
 
 ## Usage
@@ -28,7 +28,7 @@ Or add to your `cog.scm` dependencies:
 In your `init.scm`:
 
 ```scheme
-(require "helix-sidekick/sidekick.scm")
+(require "sidekick.hx/sidekick.scm")
 
 (keymap (global)
         (normal (space (s ":sidekick")
