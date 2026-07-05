@@ -69,6 +69,7 @@
 ;;;; PTY backend — rendered as a right-side vertical split
 
 (define *sidekick-pty* #f)
+(define *sidekick-dead-pty* #f) ; exit-detected handle awaiting stop-terminal
 (define *sidekick-fraction* 1/2)
 (define *sidekick-stashed-area* #f)
 (define *sidekick-terminal-area* #f)
@@ -76,44 +77,72 @@
 (define (sidekick-pty-running?)
   (and *sidekick-pty* (not (unbox (Terminal-kill-switch *sidekick-pty*)))))
 
+(define (sidekick-pty-flush-dead!)
+  (when *sidekick-dead-pty*
+    (stop-terminal *sidekick-dead-pty*)
+    (set! *sidekick-dead-pty* #f)))
+
 (define (sidekick-pty-on-start terminal)
-  (pty-process-send-command (Terminal-*pty-process* terminal)
-                            (string-append "cd " (helix-find-workspace)
-                                           " && exec " *sidekick-cmd* "\r")))
+  ;; Prefer tmux as the backing process: closing the panel detaches the tmux
+  ;; client rather than killing the AI session, so the conversation persists.
+  ;; Falls back to a direct exec when tmux is not available.
+  (pty-process-send-command
+   (Terminal-*pty-process* terminal)
+   (string-append "(" (sidekick-tmux-ensure-cmd)
+                  " && exec tmux attach-session -t " *sidekick-tmux-session* ")"
+                  " || (cd " (helix-find-workspace) " && exec " *sidekick-cmd* ")\r")))
 
 (define (sidekick-calculate-area state rect)
-  (if (and *sidekick-terminal-area* (equal? *sidekick-stashed-area* rect))
-      *sidekick-terminal-area*
-      (begin
-        (set! *sidekick-stashed-area* rect)
-        (let* ([width (round (* *sidekick-fraction* (area-width rect)))])
-          (set-editor-clip-right! width)
-          (term-resize-from-term state
-                                 (- (area-height rect) 3)
-                                 (- width 5))
-          (set! *sidekick-terminal-area*
-                (area (+ (area-x rect) (- (area-width rect) width))
-                      (area-y rect)
-                      width
-                      (- (area-height rect) 1)))
-          *sidekick-terminal-area*))))
+  ;; Detect process exit: save handle for lazy stop, reset editor clip immediately.
+  (when (and *sidekick-pty* (unbox (Terminal-kill-switch *sidekick-pty*)))
+    (set! *sidekick-dead-pty* *sidekick-pty*)
+    (set! *sidekick-pty* #f)
+    (set! *sidekick-stashed-area* #f)
+    (set! *sidekick-terminal-area* #f)
+    (set-editor-clip-right! 0))
+  (if (not *sidekick-pty*)
+      ;; No live terminal — render zero-size so the phantom component is invisible.
+      (area (area-x rect) (area-y rect) 0 0)
+      (if (and *sidekick-terminal-area* (equal? *sidekick-stashed-area* rect))
+          *sidekick-terminal-area*
+          (begin
+            (set! *sidekick-stashed-area* rect)
+            (let* ([width (round (* *sidekick-fraction* (area-width rect)))])
+              (set-editor-clip-right! width)
+              (term-resize-from-term state
+                                     (- (area-height rect) 3)
+                                     (- width 5))
+              (set! *sidekick-terminal-area*
+                    (area (+ (area-x rect) (- (area-width rect) width))
+                          (area-y rect)
+                          width
+                          (- (area-height rect) 1)))
+              *sidekick-terminal-area*)))))
 
 (define sidekick-render (make-terminal-renderer sidekick-calculate-area))
 
 (define (sidekick-pty-open)
-  (if (sidekick-pty-running?)
-      (show-term *sidekick-pty*)
-      (let ([term (make-terminal-with-renderer "sidekick"
-                                               *default-shell*
-                                               *default-terminal-rows*
-                                               *default-terminal-cols*
-                                               sidekick-pty-on-start
-                                               vte/advance-bytes
-                                               sidekick-render)])
-        (set! *sidekick-pty* term)
-        (show-term term))))
+  (sidekick-pty-flush-dead!)
+  (cond
+    [(not (sidekick-pty-running?))
+     (let ([term (make-terminal-with-renderer "sidekick"
+                                              *default-shell*
+                                              *default-terminal-rows*
+                                              *default-terminal-cols*
+                                              sidekick-pty-on-start
+                                              vte/advance-bytes
+                                              sidekick-render)])
+       (set! *sidekick-pty* term)
+       (show-term term))]
+    ;; Panel is showing and helix has focus (e.g. after Ctrl-Esc) — toggle it closed.
+    [(not (Terminal-focused? *sidekick-pty*))
+     (sidekick-pty-close)]
+    ;; Claude has focus — re-show/focus (no-op in practice, but keeps the call safe).
+    [else
+     (show-term *sidekick-pty*)]))
 
 (define (sidekick-pty-close)
+  (sidekick-pty-flush-dead!)
   (when *sidekick-pty*
     (stop-terminal *sidekick-pty*)
     (set! *sidekick-pty* #f)
