@@ -131,11 +131,14 @@
   ;; Prefer tmux as the backing process: closing the panel detaches the tmux
   ;; client rather than killing the AI session, so the conversation persists.
   ;; Falls back to a direct exec when tmux is not available.
+  ;; Run inside a bash subshell without exec so bash stays alive after the AI
+  ;; process exits. This prevents PTY death (and the resulting error) when the
+  ;; user closes the AI with Ctrl+C — the panel shows a bash prompt instead.
   (pty-process-send-command
    (Terminal-*pty-process* terminal)
    (string-append "(" (sidekick-tmux-ensure-cmd)
                   " && exec tmux attach-session -t " *sidekick-tmux-session* ")"
-                  " || (cd " (helix-find-workspace) " && exec " *sidekick-cmd* ")\r")))
+                  " || (cd " (helix-find-workspace) " && " *sidekick-cmd* ")\r")))
 
 (define (sidekick-calculate-area state rect)
   ;; Detect process exit: save handle for lazy stop, reset editor clip immediately.
