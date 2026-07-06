@@ -9,9 +9,16 @@
 ;;   (keymap (global)
 ;;           (normal (space (s ":sidekick")
 ;;                          (S ":sidekick-send-selection!")
-;;                          (B ":sidekick-send-buffer!")))
+;;                          (B ":sidekick-send-buffer!")
+;;                          (p ":sidekick-prompt-picker!")
+;;                          (ret ":sidekick-unfocus")))
 ;;           (select (space (S ":sidekick-send-selection!")
-;;                          (B ":sidekick-send-buffer!"))))
+;;                          (B ":sidekick-send-buffer!")
+;;                          (p ":sidekick-prompt-picker!"))))
+;;
+;; PTY panel keys (while claude has focus):
+;;   Shift+Tab   — return focus to helix (panel stays open)
+;;   Ctrl+Esc    — close the panel entirely
 
 (#%require-dylib "libsteel_pty"
                  (only-in pty-process-send-command
@@ -24,6 +31,8 @@
 (require "steel/result")
 (require-builtin helix/components)
 (require "steel-pty/term.scm")
+(require (only-in "mattwparas-helix-package/cogs/picker.scm" picker-selection))
+(require-builtin helix/core/text)
 
 ;;;; Configuration
 
@@ -65,6 +74,42 @@
   (define ext (sidekick-path->extension (sidekick-current-path)))
   (define lang (if ext ext ""))
   (string-append "```" lang "\n" text "\n```\n"))
+
+;;;; Prebuilt prompts
+
+(define *sidekick-prebuilt-prompts*
+  '(("Explain this code"   . "Explain what this code does, step by step.")
+    ("Find bugs"           . "Review this code for bugs, edge cases, and potential issues.")
+    ("Refactor"            . "Suggest how to refactor this for clarity and maintainability.")
+    ("Write tests"         . "Write unit tests for this code.")
+    ("Add docs"            . "Write documentation comments for this code.")
+    ("Optimize"            . "Suggest performance improvements for this code.")))
+
+;;@doc
+;; Open a picker of prebuilt prompts. Captures the current selection as a
+;; @file L#-# reference, then sends the chosen prompt to the sidekick AI.
+(define (sidekick-prompt-picker!)
+  (define doc-id   (editor->doc-id (editor-focus)))
+  (define text     (editor->text doc-id))
+  (define path     (sidekick-current-path))
+  (define path-str (if (string? path) path (path->string path)))
+  (define ranges   (selection-char-ranges))
+  (define ref-str
+    (if (null? ranges)
+        (string-append "@" path-str "\n")
+        (let* ([range    (car ranges)]
+               [from     (car range)]
+               [to       (cadr range)]
+               [end-char (if (> to from) (- to 1) from)]
+               [start-ln (+ 1 (rope-char->line text from))]
+               [end-ln   (+ 1 (rope-char->line text end-char))])
+          (string-append "@" path-str " L" (int->string start-ln) "-" (int->string end-ln) "\n"))))
+  (push-component!
+   (picker-selection
+    *sidekick-prebuilt-prompts*
+    (lambda (pair)
+      (sidekick-send! (string-append ref-str (cdr pair) "\n")))
+    #:value-formatter car)))
 
 ;;;; PTY backend — rendered as a right-side vertical split
 
@@ -116,7 +161,7 @@
                     (area (+ (area-x rect) (- (area-width rect) width))
                           (area-y rect)
                           width
-                          (- (area-height rect) 1)))
+                          (area-height rect)))
               *sidekick-terminal-area*)))))
 
 (define sidekick-render (make-terminal-renderer sidekick-calculate-area))
@@ -126,7 +171,7 @@
   (cond
     [(not (sidekick-pty-running?))
      (let ([term (make-terminal-with-renderer "sidekick"
-                                              *default-shell*
+                                              "bash"
                                               *default-terminal-rows*
                                               *default-terminal-cols*
                                               sidekick-pty-on-start
@@ -134,8 +179,8 @@
                                               sidekick-render)])
        (set! *sidekick-pty* term)
        (show-term term))]
-    ;; Panel is showing and helix has focus (e.g. after Ctrl-Esc) — toggle it closed.
-    [(not (Terminal-focused? *sidekick-pty*))
+    ;; Panel is showing and helix has focus (e.g. after Shift+Tab) — toggle it closed.
+    [(not (unbox (Terminal-focused? *sidekick-pty*)))
      (sidekick-pty-close)]
     ;; Claude has focus — re-show/focus (no-op in practice, but keeps the call safe).
     [else
@@ -154,6 +199,13 @@
   (unless (sidekick-pty-running?)
     (sidekick-pty-open))
   (pty-process-send-command (Terminal-*pty-process* *sidekick-pty*) text))
+
+;;@doc
+;; Return focus to helix while keeping the sidekick panel open.
+;; Equivalent to pressing Shift+Tab inside the PTY panel.
+(define (sidekick-unfocus)
+  (when (sidekick-pty-running?)
+    (set-box! (Terminal-focused? *sidekick-pty*) #f)))
 
 ;;;; tmux backend
 ;;
@@ -214,10 +266,25 @@
     [(pty)  (sidekick-pty-send! text)]))
 
 ;;@doc
-;; Send the current selection as a fenced code block.
+;; Send the current selection as a @file L#-# reference.
 ;; Works in normal and select (visual) mode.
 (define (sidekick-send-selection!)
-  (sidekick-send! (sidekick-code-block (helix.static.current-highlighted-text!))))
+  (define doc-id  (editor->doc-id (editor-focus)))
+  (define text    (editor->text doc-id))
+  (define path    (sidekick-current-path))
+  (define path-str (if (string? path) path (path->string path)))
+  (define ranges  (selection-char-ranges))
+  (define msg
+    (if (null? ranges)
+        (string-append "@" path-str "\n")
+        (let* ([range    (car ranges)]
+               [from     (car range)]
+               [to       (cadr range)]
+               [end-char (if (> to from) (- to 1) from)]
+               [start-ln (+ 1 (rope-char->line text from))]
+               [end-ln   (+ 1 (rope-char->line text end-char))])
+          (string-append "@" path-str " L" (int->string start-ln) "-" (int->string end-ln) "\n"))))
+  (sidekick-send! msg))
 
 ;;@doc
 ;; Send the entire current buffer as a fenced code block.
@@ -240,5 +307,7 @@
          sidekick-send!
          sidekick-send-selection!
          sidekick-send-buffer!
+         sidekick-prompt-picker!
+         sidekick-unfocus
          set-sidekick-cmd!
          set-sidekick-backend!)
