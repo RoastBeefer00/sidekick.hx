@@ -158,8 +158,8 @@
             (let* ([width (round (* *sidekick-fraction* (area-width rect)))])
               (set-editor-clip-right! width)
               (term-resize-from-term state
-                                     (- (area-height rect) 3)
-                                     (- width 5))
+                                     (max 1 (- (area-height rect) 3))
+                                     (max 1 (- width 5)))
               (set! *sidekick-terminal-area*
                     (area (+ (area-x rect) (- (area-width rect) width))
                           (area-y rect)
