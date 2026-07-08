@@ -256,19 +256,31 @@
     (set-box! (Terminal-focused? *sidekick-pty*) #f)
     (set-editor-terminal-has-focus! #f)))
 
+;; When the sidekick takes focus from helix, collapse any active selection and
+;; return to normal mode, clearing any custom steel-mode (e.g. the vim plugin's
+;; VIS-LINE). Otherwise a live selection / non-normal mode is stranded behind
+;; the panel overlay, which leaves the helix cursor in a broken state.
+(define (sidekick-normalize-helix!)
+  (helix.static.collapse_selection)
+  (helix.static.normal_mode)
+  (unset-steel-mode!))
+
 ;;@doc
 ;; Focus the sidekick panel if already open, or open it if not running.
 ;; Intended as the "navigate right" fallback when helix is at its right edge.
 (define (sidekick-focus!)
   (case (sidekick-effective-backend)
     [(pty)
+     (sidekick-normalize-helix!)
      (if (sidekick-pty-running?)
          (begin
            (set-box! (Terminal-focused? *sidekick-pty*) #t)
            (set-editor-terminal-has-focus! #t)
            (show-term *sidekick-pty*))
          (sidekick-pty-open))]
-    [(tmux) (sidekick-tmux-open)]))
+    [(tmux)
+     (sidekick-normalize-helix!)
+     (sidekick-tmux-open)]))
 
 ;;;; tmux backend
 ;;
