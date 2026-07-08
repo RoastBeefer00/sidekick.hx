@@ -17,6 +17,9 @@ Set TypingSpeed 80ms
 Type "hx sample.rs"
 Enter
 Sleep 2s
+Type ":showkeys-toggle"
+Enter
+Sleep 200ms
 
 # ── Open the sidekick panel ─────────────────────────────────────────────────
 # Space+a+c opens sidekick; PTY appears on the right and takes focus
